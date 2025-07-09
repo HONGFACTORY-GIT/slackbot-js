@@ -86,7 +86,7 @@ slackApp.message(async ({ message, say }) => {
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4-1106-preview", // gpt-4o도 가능하지만, 길이 안정성은 preview 모델이 좋음
+      model: "gpt-4o", // gpt-4o도 가능하지만, 길이 안정성은 preview 모델이 좋음
       messages: chatHistory,
       max_tokens: 2048,
       temperature: 0.7,
