@@ -5,12 +5,12 @@ const express = require('express');
 // ✅ Slack App (Socket Mode로 실행)
 const slackApp = new App({
   token: process.env.SLACK_BOT_TOKEN,
-  appToken: process.env.SLACK_APP_TOKEN, // SocketMode 사용 시 필요
+  appToken: process.env.SLACK_APP_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET,
   socketMode: true
 });
 
-// ✅ Slack 이벤트
+// ✅ Slack 이벤트: 홈 탭 열림
 slackApp.event('app_home_opened', async ({ event, client }) => {
   try {
     await client.views.publish({
@@ -54,12 +54,18 @@ slackApp.event('app_home_opened', async ({ event, client }) => {
   }
 });
 
-// ✅ 메시지 응답
+// ✅ 메시지 응답: "Hello" 라는 문자열에 반응
 slackApp.message('Hello', async ({ message, say }) => {
   await say(`Hello, <@${message.user}>`);
 });
 
-// ✅ Express 서버 (Cloudtype 헬스체크 및 접속용)
+// ✅ 디버깅용 메시지 로깅 (모든 메시지에 반응)
+slackApp.message(async ({ message, say }) => {
+  console.log('[DEBUG] 메시지 도착:', message.text);
+  await say(`✅ 메시지 잘 받았어요, <@${message.user}>`);
+});
+
+// ✅ Express 서버 (Cloudtype 헬스체크)
 const server = express();
 const PORT = process.env.PORT || 3000;
 
@@ -69,11 +75,6 @@ server.get('/', (_, res) => {
 
 server.listen(PORT, async () => {
   console.log(`🌐 Express server is listening on port ${PORT}`);
-  await slackApp.start();  // ⚠️ 여기서는 포트 넘기지 않음
+  await slackApp.start();  // 포트 전달하지 마세요 (SocketMode용)
   console.log('⚡️ Bolt app is running!');
-});
-
-app.message(async ({ message, say }) => {
-  console.log('[DEBUG] 메시지 도착:', message.text);
-  await say(`✅ 메시지 잘 받았어요, <@${message.user}>`);
 });
