@@ -19,31 +19,61 @@ const slackApp = new App({
   socketMode: true,
 });
 
-// ✅ OpenAI v4 SDK 초기화
+// ✅ OpenAI 초기화
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// ✅ Slack 메시지 핸들링
+// ✅ GPT 시스템 프롬프트
+const systemPrompt = `
+너는 팀의 슬랙 대화방에서 주제 중심의 대화를 유지하고, 내용을 정리하고 요약해주는 스마트한 비서야.
+
+🧠 너의 역할:
+- 팀원들이 주제에 맞는 대화를 이어가도록 돕고
+- 주제에서 벗어난 질문이나 이야기가 나오면 부드럽게 다시 안내하고
+- 중요한 내용을 요약해서 정리해줘
+- 대화가 너무 길어져 GPT 응답이 30개 이상 누적될 경우, 주제 변경이나 대화 초기화를 유도해줘
+
+💬 출력 예시:
+“이 대화는 30개 이상의 응답이 이어졌어요. 주제를 다시 정하거나 대화를 정리해 보는 건 어떨까요?”
+
+📌 출력 형식:
+1. 핵심 요약 (한 문장)
+2. 대화 정리 (• 항목 리스트)
+3. 실행 항목 (→ 기호 사용)
+4. 팀 공유용 요약 문장 (복붙용 1~2줄)
+
+💡 참고 사항:
+- 흐릿한 내용은 다시 질문하거나 명확히 해줘
+- 반복되는 말은 줄이고 중요한 정보 위주로 정리
+- 결과물은 깔끔하게 출력해서 슬랙/노션/메일에 붙여넣기 좋게 해줘
+`.trim();
+
+// ✅ 채널별 대화 저장소
+const conversations = new Map();
+const MAX_MESSAGES = 60; // GPT 응답 30쌍 기준 (user + assistant)
+
 slackApp.message(async ({ message, say }) => {
   if (message.subtype === "bot_message") return;
-
+  const channelId = message.channel;
   const userInput = message.text?.trim();
   if (!userInput) {
-    console.warn("⚠️ 사용자 메시지가 비어 있습니다.");
     await say("⚠️ 메시지가 비어있어요. 다시 입력해 주세요.");
     return;
   }
 
-  console.log("[GPT 요청] 사용자 메시지:", userInput);
+  // ✅ 채널별 메시지 초기화
+  if (!conversations.has(channelId)) {
+    conversations.set(channelId, [{ role: "system", content: systemPrompt }]);
+  }
+
+  const history = conversations.get(channelId);
+  history.push({ role: "user", content: userInput });
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o", // 또는 "gpt-4" , gpt-4o , gpt-3.5-turbo
-      messages: [
-        { role: "system", content: "당신은 친절하고 유용한 슬랙 비서입니다." },
-        { role: "user", content: userInput },
-      ],
+      model: "gpt-4o",
+      messages: history,
     });
 
     const reply = completion.choices[0]?.message?.content?.trim();
@@ -51,15 +81,22 @@ slackApp.message(async ({ message, say }) => {
       console.warn("⚠️ GPT 응답이 비어 있습니다.");
       await say("⚠️ GPT가 응답을 생성하지 못했어요.");
     } else {
+      history.push({ role: "assistant", content: reply });
       await say(reply);
     }
+
+    // ✅ 응답 누적 30쌍(60개 메시지) 초과 시 경고
+    if (history.length >= MAX_MESSAGES) {
+      await say("⚠️ 이 대화는 GPT 응답이 30개 이상 이어졌어요. 주제를 다시 정하거나 `/reset`으로 대화를 초기화하는 걸 추천드려요.");
+    }
+
   } catch (err) {
     console.error("❌ GPT 응답 오류:", err);
     await say("⚠️ GPT 응답 중 오류가 발생했습니다.");
   }
 });
 
-// ✅ Express 서버 (헬스체크용)
+// ✅ 헬스 체크용 Express 서버
 const server = express();
 const PORT = process.env.PORT || 3000;
 
