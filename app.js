@@ -11,7 +11,7 @@ require("dotenv").config();
   }
 });
 
-// ✅ Slack App 초기화 (Socket Mode)
+// ✅ Slack App 초기화
 const slackApp = new App({
   token: process.env.SLACK_BOT_TOKEN,
   appToken: process.env.SLACK_APP_TOKEN,
@@ -24,7 +24,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// ✅ 개선된 GPT 시스템 프롬프트
+// ✅ 시스템 프롬프트
 const systemPrompt = `
 당신은 슬랙에서 팀을 돕는 스마트한 대화 비서 GPT입니다.
 
@@ -41,74 +41,82 @@ const systemPrompt = `
 - 정보 전달 후 다음 질문을 유도하거나 정리 제안
 
 📌 예외 처리:
-- 대화가 너무 길면 아래 문구 출력:
-👉 "이 대화는 30개 이상의 응답이 이어졌어요. 주제를 다시 정하거나 \`/reset\`으로 초기화해보는 건 어떨까요?
-
-"
+👉 "이 대화는 30개 이상의 응답이 이어졌어요. 주제를 다시 정하거나 \`/reset\`으로 초기화해보는 건 어떨까요?"
 `.trim();
 
-// ✅ 채널별 대화 저장소
+// ✅ 대화 저장소
 const conversations = new Map();
-const MAX_MESSAGES = 60; // (30쌍)
+const MAX_HISTORY = 60; // 최대 메시지 개수 (user/assistant 합쳐서)
 
-// ✅ 봇 ID 변수
+// ✅ 봇 ID 저장
 let botUserId = null;
 
-// ✅ 봇 사용자 ID 가져오기
 (async () => {
   const auth = await slackApp.client.auth.test({ token: process.env.SLACK_BOT_TOKEN });
   botUserId = auth.user_id;
   console.log(`🤖 Slack Bot ID: ${botUserId}`);
 })();
 
-// ✅ 슬랙 메시지 핸들링
+// ✅ Slack 메시지 핸들링
 slackApp.message(async ({ message, say }) => {
   if (message.subtype === "bot_message") return;
-  const userInput = message.text?.trim();
-  const channelId = message.channel;
 
-  // ✅ GPT 호출 조건: @봇ID 태그 포함 여부 확인
+  const channelId = message.channel;
+  const userInput = message.text?.trim();
   if (!userInput || !userInput.includes(`<@${botUserId}>`)) return;
 
-  // ✅ 입력에서 봇 태그 제거
   const cleanInput = userInput.replace(`<@${botUserId}>`, "").trim();
+
   if (!cleanInput) {
     await say("⚠️ GPT에게 보낼 메시지를 입력해 주세요.");
     return;
   }
 
- console.log(`🟡 [요청] 채널: ${channelId},  입력: ${cleanInput}`);
-  
-  // ✅ 대화 이력 초기화
-  if (!conversations.has(channelId)) {
-    conversations.set(channelId, [{ role: "system", content: systemPrompt }]);
+  // ✅ /reset 처리
+  if (cleanInput === "/reset") {
+    conversations.set(channelId, []);
+    await say("🧹 대화를 초기화했어요. 새 주제로 다시 시작해볼까요?");
+    return;
   }
 
-  const history = conversations.get(channelId);
-  history.push({ role: "user", content: cleanInput });
+  // ✅ 기존 이력 불러오기 (없으면 빈 배열)
+  const prevHistory = conversations.get(channelId) || [];
+
+  // ✅ 대화 이력: 최근 MAX 유지 + systemPrompt 항상 삽입
+  const trimmedHistory = prevHistory.slice(-MAX_HISTORY);
+  const chatHistory = [
+    { role: "system", content: systemPrompt },
+    ...trimmedHistory,
+    { role: "user", content: cleanInput }
+  ];
+
+  console.log(`🟡 [요청] 채널: ${channelId}, 입력: ${cleanInput}`);
 
   try {
-const completion = await openai.chat.completions.create({
-  model: "gpt-4o",
-  messages: history,
-  max_tokens: 1024, // 최대 토큰 수 (답변 길이)
-  temperature: 0.7, // 창의성 (0 = 보수적, 1 = 매우 창의적)
-  top_p: 1.0,       // 핵심 확률(샘플링) 제어
-  frequency_penalty: 0.3, // 반복 억제
-  presence_penalty: 0.4,  // 새로운 주제 유도
-});
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: chatHistory,
+      max_tokens: 1024,
+      temperature: 0.7,
+      top_p: 1.0,
+      frequency_penalty: 0.3,
+      presence_penalty: 0.4,
+    });
 
-    
     const reply = completion.choices[0]?.message?.content?.trim();
+
     if (!reply) {
       await say("⚠️ GPT가 응답을 생성하지 못했어요.");
-    } else {
-      history.push({ role: "assistant", content: reply });
-      await say(reply);
+      return;
     }
 
-    // ✅ 응답 개수 경고
-    if (history.length >= MAX_MESSAGES) {
+    // ✅ 응답 저장 및 출력
+    const newHistory = [...trimmedHistory, { role: "user", content: cleanInput }, { role: "assistant", content: reply }];
+    conversations.set(channelId, newHistory);
+    await say(reply);
+
+    // ✅ 응답 30쌍 초과 시 안내
+    if (newHistory.length >= MAX_HISTORY) {
       await say("⚠️ 이 대화는 GPT 응답이 30개 이상 이어졌어요. 주제를 다시 정하거나 `/reset`으로 초기화해보는 건 어떨까요?");
     }
 
