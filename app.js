@@ -88,11 +88,17 @@ slackApp.message(async ({ message, say }) => {
   history.push({ role: "user", content: cleanInput });
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: history,
-    });
+const completion = await openai.chat.completions.create({
+  model: "gpt-4o",
+  messages: history,
+  max_tokens: 1024, // 최대 토큰 수 (답변 길이)
+  temperature: 0.7, // 창의성 (0 = 보수적, 1 = 매우 창의적)
+  top_p: 1.0,       // 핵심 확률(샘플링) 제어
+  frequency_penalty: 0.3, // 반복 억제
+  presence_penalty: 0.4,  // 새로운 주제 유도
+});
 
+    
     const reply = completion.choices[0]?.message?.content?.trim();
     if (!reply) {
       await say("⚠️ GPT가 응답을 생성하지 못했어요.");
