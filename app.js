@@ -39,7 +39,7 @@ slackApp.message(async ({ message, say }) => {
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // 또는 "gpt-4"
+      model: "gpt-4o", // 또는 "gpt-4" , gpt-4o , gpt-3.5-turbo
       messages: [
         { role: "system", content: "당신은 친절하고 유용한 슬랙 비서입니다." },
         { role: "user", content: userInput },
