@@ -36,7 +36,6 @@ const systemPrompt = `
 - 반복되는 질문은 "이전에 언급했지만..." 형태로 처리합니다.
 
 💬 응답 형식:
-- 요약은 \`•\` 기호로 정리
 - 대화 흐름을 고려한 자연스러운 문장
 - 정보 전달 후 다음 질문을 유도하거나 정리 제안
 
@@ -75,6 +74,8 @@ slackApp.message(async ({ message, say }) => {
     return;
   }
 
+ console.log(`🟡 [요청] 채널: ${channelId}, 사용자: ${userId}, 입력: ${cleanInput}`);
+  
   // ✅ 대화 이력 초기화
   if (!conversations.has(channelId)) {
     conversations.set(channelId, [{ role: "system", content: systemPrompt }]);
