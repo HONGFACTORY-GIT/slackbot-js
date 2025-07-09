@@ -78,13 +78,19 @@ slackApp.message(async ({ message, say }) => {
   const responseStructures = [
     "현상 → 원인 → 해결 → 요약",
     "문제 → 해결 → 결과",
-    "TIP 3가지",
-    "Q&A 형식",
     "실제 사례 → 교훈 → 적용법",
     "스토리텔링 → 분석 → 제안",
     "원리 설명 → 활용 방법",
-    "비유 중심 해설",
-    "장단점 비교"
+    "원인 → 실수 사례 → 교정 팁",
+    "과정 → 문제 → 개선안",
+    "장점 → 단점 → 추천 기준",
+    "현재 상태 → 목표 → 중간 단계 제시",
+    "오해 → 진실 → 활용법",
+    "상황 → 공감 → 제안"	,
+    "Before → After → 변화 방법",
+    "의문 제기 → 분석 → 재정의",
+    "사례 → 패턴 → 전략 ",   
+    "비유 중심 해설"
   ];
   const selectedStructure = responseStructures[Math.floor(Math.random() * responseStructures.length)];
 
