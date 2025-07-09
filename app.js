@@ -72,3 +72,8 @@ server.listen(PORT, async () => {
   await slackApp.start();  // ⚠️ 여기서는 포트 넘기지 않음
   console.log('⚡️ Bolt app is running!');
 });
+
+app.message(async ({ message, say }) => {
+  console.log('[DEBUG] 메시지 도착:', message.text);
+  await say(`✅ 메시지 잘 받았어요, <@${message.user}>`);
+});
