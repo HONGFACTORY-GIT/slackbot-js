@@ -29,26 +29,16 @@ const systemPrompt = `
 당신은 슬랙에서 팀을 돕는 스마트한 대화 비서 GPT입니다.
 
 🧠 역할:
-- 현재 대화의 주제를 파악하고 유지하며 흐름을 관리합니다.
-- 사용자가 주제에서 벗어난 질문을 하면 부드럽게 안내합니다.
-- 이전 주제와 다른 질문이 시작되면 해당 주제를 진행하는게 맞는지 물어봅니다.
-- 간결하되 충분한 길이로 응답을 구성해 주세요. 짧은 응답은 지양합니다.
-- 응답이 30개 이상 누적되면 주제 전환이나 초기화를 유도합니다.
-- 반복되는 질문은 "이전에 언급했지만..." 형태로 처리합니다.
-
-💬 응답 형식:
-- 대화 흐름을 고려한 자연스러운 문장
-- 정보 전달 후 다음 질문을 유도하거나 정리 제안
-
-📌 예외 처리:
-👉 "이 대화는 30개 이상의 응답이 이어졌어요. 주제를 다시 정하거나 \`/reset\`으로 초기화해보는 건 어떨까요?"
+- 대화의 주제를 파악하고 유지하며 흐름을 관리합니다.
+- 짧고 일괄적인 응답을 피하고, 질문의 맥락을 고려해 충분한 길이로 응답합니다.
+- 항목을 나열하되, 각 항목에 설명과 예시를 함께 제공하세요.
+- 응답 말미에는 다음 질문을 유도하거나 사용자의 선택을 요청하세요.
+- 사용자가 질문을 짧게 하거나 애매하게 말할 경우, 의도를 재확인하거나 구체적인 질문을 되묻습니다.
 `.trim();
 
-// ✅ 대화 저장소
 const conversations = new Map();
-const MAX_HISTORY = 60; // 최대 메시지 개수 (user/assistant 합쳐서)
+const MAX_HISTORY = 60; // 메시지 이력 제한
 
-// ✅ 봇 ID 저장
 let botUserId = null;
 
 (async () => {
@@ -57,7 +47,7 @@ let botUserId = null;
   console.log(`🤖 Slack Bot ID: ${botUserId}`);
 })();
 
-// ✅ Slack 메시지 핸들링
+// ✅ Slack 메시지 처리
 slackApp.message(async ({ message, say }) => {
   if (message.subtype === "bot_message") return;
 
@@ -65,24 +55,26 @@ slackApp.message(async ({ message, say }) => {
   const userInput = message.text?.trim();
   if (!userInput || !userInput.includes(`<@${botUserId}>`)) return;
 
-  const cleanInput = userInput.replace(`<@${botUserId}>`, "").trim();
-
-  if (!cleanInput) {
+  const rawInput = userInput.replace(`<@${botUserId}>`, "").trim();
+  if (!rawInput) {
     await say("⚠️ GPT에게 보낼 메시지를 입력해 주세요.");
     return;
   }
 
-  // ✅ /reset 처리
-  if (cleanInput === "/reset") {
+  // ✅ /reset 명령어 처리
+  if (rawInput === "/reset") {
     conversations.set(channelId, []);
     await say("🧹 대화를 초기화했어요. 새 주제로 다시 시작해볼까요?");
     return;
   }
 
-  // ✅ 기존 이력 불러오기 (없으면 빈 배열)
-  const prevHistory = conversations.get(channelId) || [];
+  // ✅ 짧은 질문 보완용 프롬프트 래핑
+  const cleanInput = rawInput.length < 15
+    ? `질문이 다소 짧습니다. 이 질문에 대해 맥락을 고려한 충분한 길이의 답변을 해주세요: "${rawInput}"`
+    : rawInput;
 
-  // ✅ 대화 이력: 최근 MAX 유지 + systemPrompt 항상 삽입
+  // ✅ 기존 이력 불러오기
+  const prevHistory = conversations.get(channelId) || [];
   const trimmedHistory = prevHistory.slice(-MAX_HISTORY);
   const chatHistory = [
     { role: "system", content: systemPrompt },
@@ -90,17 +82,17 @@ slackApp.message(async ({ message, say }) => {
     { role: "user", content: cleanInput }
   ];
 
-  console.log(`🟡 [요청] 채널: ${channelId}, 입력: ${cleanInput}`);
+  console.log(`🟡 [입력] 채널: ${channelId}, 입력: ${rawInput}`);
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4-1106-preview", // gpt-4o도 가능하지만, 길이 안정성은 preview 모델이 좋음
       messages: chatHistory,
-      max_tokens: 1024,
+      max_tokens: 2048,
       temperature: 0.7,
       top_p: 1.0,
-      frequency_penalty: 0.3,
-      presence_penalty: 0.4,
+      frequency_penalty: 0.2,
+      presence_penalty: 0.3,
     });
 
     const reply = completion.choices[0]?.message?.content?.trim();
@@ -110,12 +102,16 @@ slackApp.message(async ({ message, say }) => {
       return;
     }
 
-    // ✅ 응답 저장 및 출력
-    const newHistory = [...trimmedHistory, { role: "user", content: cleanInput }, { role: "assistant", content: reply }];
+    const newHistory = [
+      ...trimmedHistory,
+      { role: "user", content: cleanInput },
+      { role: "assistant", content: reply }
+    ];
     conversations.set(channelId, newHistory);
+
     await say(reply);
 
-    // ✅ 응답 30쌍 초과 시 안내
+    // ✅ 누적 경고 출력
     if (newHistory.length >= MAX_HISTORY) {
       await say("⚠️ 이 대화는 GPT 응답이 30개 이상 이어졌어요. 주제를 다시 정하거나 `/reset`으로 초기화해보는 건 어떨까요?");
     }
@@ -126,7 +122,7 @@ slackApp.message(async ({ message, say }) => {
   }
 });
 
-// ✅ 헬스 체크용 Express 서버
+// ✅ Express 서버 (헬스 체크용)
 const server = express();
 const PORT = process.env.PORT || 3000;
 
