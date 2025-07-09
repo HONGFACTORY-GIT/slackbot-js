@@ -1,8 +1,7 @@
 const { App } = require("@slack/bolt");
+const { Configuration, OpenAIApi } = require("openai");
 require('dotenv').config();
-const express = require('express');
 
-// ✅ Slack App (Socket Mode로 실행)
 const slackApp = new App({
   token: process.env.SLACK_BOT_TOKEN,
   appToken: process.env.SLACK_APP_TOKEN,
@@ -10,61 +9,46 @@ const slackApp = new App({
   socketMode: true
 });
 
-// ✅ Slack 이벤트: 홈 탭 열림
-slackApp.event('app_home_opened', async ({ event, client }) => {
+// ✅ OpenAI 설정
+const openai = new OpenAIApi(
+  new Configuration({
+    apiKey: process.env.OPENAI_API_KEY
+  })
+);
+
+// ✅ Slack 메시지 이벤트 핸들링
+slackApp.message(async ({ message, say }) => {
+  if (message.subtype && message.subtype === 'bot_message') return;
+
   try {
-    await client.views.publish({
-      user_id: event.user,
-      view: {
-        type: 'home',
-        callback_id: 'home_view',
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: "*Welcome to your _App's Home_* :tada:"
-            }
-          },
-          { type: "divider" },
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: "이 버튼은 지금은 동작하지 않지만, 나중에 actions()로 핸들링 할 수 있어요!"
-            }
-          },
-          {
-            type: "actions",
-            elements: [
-              {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "Click me!"
-                }
-              }
-            ]
-          }
-        ]
-      }
+    console.log("[GPT 요청] 사용자 메시지:", message.text);
+
+    const completion = await openai.createChatCompletion({
+      model: "gpt-3.5-turbo",  // 또는 gpt-4
+      messages: [
+        { role: "system", content: "당신은 친절한 슬랙 비서입니다." },
+        { role: "user", content: message.text }
+      ]
     });
-  } catch (error) {
-    console.error(error);
+
+    const reply = completion.data.choices[0].message.content.trim();
+
+    await say(reply);
+  } catch (err) {
+    console.error("GPT 처리 오류:", err);
+    await say("⚠️ GPT 응답 중 오류가 발생했습니다.");
   }
 });
 
-
-// ✅ Express 서버 (Cloudtype 헬스체크)
+// ✅ Express 헬스 체크용 서버
+const express = require('express');
 const server = express();
 const PORT = process.env.PORT || 3000;
 
-server.get('/', (_, res) => {
-  res.send("✅ Slack bot is alive and ready!");
-});
+server.get('/', (_, res) => res.send('✅ Slack bot is alive!'));
 
 server.listen(PORT, async () => {
   console.log(`🌐 Express server is listening on port ${PORT}`);
-  await slackApp.start();  // 포트 전달하지 마세요 (SocketMode용)
-  console.log('⚡️ Bolt app is running!');
+  await slackApp.start();
+  console.log("⚡️ Bolt app is running!");
 });
