@@ -74,7 +74,7 @@ slackApp.message(async ({ message, say }) => {
     return;
   }
 
- console.log(`🟡 [요청] 채널: ${channelId}, 사용자: ${userId}, 입력: ${cleanInput}`);
+ console.log(`🟡 [요청] 채널: ${channelId},  입력: ${cleanInput}`);
   
   // ✅ 대화 이력 초기화
   if (!conversations.has(channelId)) {
