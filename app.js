@@ -54,16 +54,6 @@ slackApp.event('app_home_opened', async ({ event, client }) => {
   }
 });
 
-// ✅ 메시지 응답: "Hello" 라는 문자열에 반응
-slackApp.message('Hello', async ({ message, say }) => {
-  await say(`Hello, <@${message.user}>`);
-});
-
-// ✅ 디버깅용 메시지 로깅 (모든 메시지에 반응)
-slackApp.message(async ({ message, say }) => {
-  console.log('[DEBUG] 메시지 도착:', message.text);
-  await say(`✅ 메시지 잘 받았어요, <@${message.user}>`);
-});
 
 // ✅ Express 서버 (Cloudtype 헬스체크)
 const server = express();
