@@ -56,12 +56,59 @@ slackApp.message(async ({ message, say }) => {
     return;
   }
 
+  // ✅ "대화내용요약" 명령어 처리
+  if (rawInput === "대화내용요약") {
+    const prevHistory = conversations.get(channelId) || [];
+
+    const userOnlyMessages = prevHistory
+      .filter(msg => msg.role === "user")
+      .map((msg, i) => `(${i + 1}) ${msg.content}`)
+      .join("\n");
+
+    if (!userOnlyMessages) {
+      await say("📭 요약할 사용자 메시지가 없습니다.");
+      return;
+    }
+
+    const summaryPrompt = `
+다음은 사용자의 과거 Slack 대화 메시지입니다.
+이 흐름을 보고 어떤 주제를 이야기했는지 간결하게 요약해 주세요.
+너무 단순 요약보다는, 흐름이 어떤 식으로 전개되었는지도 설명해 주세요:
+
+${userOnlyMessages}
+    `.trim();
+
+    try {
+      const summaryCompletion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: "당신은 Slack 대화 흐름을 정리해주는 똑똑한 요약 비서입니다." },
+          { role: "user", content: summaryPrompt }
+        ],
+        max_tokens: 1024,
+        temperature: 0.5
+      });
+
+      const summary = summaryCompletion.choices[0]?.message?.content?.trim();
+
+      if (summary) {
+        await say(`📝 사용자 대화 흐름 요약:\n${summary}`);
+      } else {
+        await say("⚠️ 대화 요약이 생성되지 않았습니다.");
+      }
+    } catch (err) {
+      console.error("❌ 요약 중 오류:", err);
+      await say("⚠️ 대화 요약 중 오류가 발생했습니다.");
+    }
+
+    return;
+  }
+
   // ✅ 짧은 질문 보완용 프롬프트 래핑
   const cleanInput = rawInput.length < 15
     ? `질문이 다소 짧습니다. 이 질문에 대해 맥락을 고려한 충분한 길이의 답변을 해주세요: "${rawInput}"`
     : rawInput;
 
-  // ✅ 대화 이력 불러오기
   const prevHistory = conversations.get(channelId) || [];
   const trimmedHistory = prevHistory.slice(-MAX_HISTORY);
 
@@ -74,9 +121,7 @@ slackApp.message(async ({ message, say }) => {
     repetitionNotice = `💡 이전에도 비슷한 질문을 하셨는데, 이번엔 다른 관점에서 설명해드릴게요.\n`;
   }
 
-
-
-  // ✅ systemPrompt 생성
+  // ✅ systemPrompt 설정
   const systemPrompt = `
 당신은 슬랙 채널에서 팀의 질문을 돕는 스마트한 대화형 GPT입니다.
 
@@ -96,31 +141,21 @@ slackApp.message(async ({ message, say }) => {
   • 비유 중심 해설  
   • 장점 → 단점 → 추천 기준  
   • 오해 → 진실 → 활용법  
-  • Before → After → 변화 방법
-  • 현재 상태 → 목표 → 중간 단계 제시
-  • 상황 → 공감 → 제안
-  • 의문 제기 → 분석 → 재정의
-  • 사례 → 패턴 → 전략
-  • 비유 중심 해설
-  • 과정 → 문제 → 개선안
-  • 원인 → 실수 사례 → 교정 팁
-  • 원리 설명 → 활용 방법등 
-
-- 단순 정보형 질문에는 TIP 나열이나 Q&A,  
-  상황 분석이 필요한 질문에는 사례/원인/해결 구조가 어울릴 수 있습니다.
-
-- 같은 구조와 문체를 반복하지 않도록 주의하세요.
+  • Before → After → 변화 방법  
+  • 현재 상태 → 목표 → 중간 단계 제시  
+  • 상황 → 공감 → 제안  
+  • 의문 제기 → 분석 → 재정의  
+  • 사례 → 패턴 → 전략  
+  • 과정 → 문제 → 개선안  
+  • 원리 설명 → 활용 방법
 
 📌 응답 가이드라인:
 - 질문의 맥락을 파악하고, 상황에 따라 응답 형식을 조정하세요.
-- 길이는 제한하지 않으며, 예시와 설명을 풍부하게 포함해 주세요.
-- 실제 사례나 비유, 업무 적용 예시는 필수입니다.
+- 예시와 설명을 풍부하게 포함해 주세요.
 - 마무리에는 다음 행동이나 선택지를 제안해 주세요.
 
 🔴 주제 일관성 유지:
 - 대화 중 주제가 명확히 진행되고 있을 경우, 질문이 갑자기 다른 방향으로 전환되면 그 점을 부드럽게 지적하고, 관련된 질문인지 확인해 주세요.
-- 예시: "지금까지는 A에 대한 이야기를 나눴는데, 이 질문은 B와 관련된 것 같아요. 혹시 방향을 바꾸신 걸까요?"
-- 사용자의 흐름을 존중하되, 주제를 리마인드하거나 연결 가능한 방향을 제안해 주세요.
 `.trim();
 
   const chatHistory = [
