@@ -40,27 +40,27 @@ slackApp.message(async ({ message, say }) => {
   if (message.subtype === "bot_message") return;
 
   const channelId = message.channel;
-  const userInput = message.text?.trim();
-  if (!userInput || !userInput.includes(`<@${botUserId}>`)) return;
+  const text = message.text?.trim();
+  if (!text || !botUserId) return;
 
-  const rawInput = userInput.replace(`<@${botUserId}>`, "").trim();
-  if (!rawInput) {
-    await say("⚠️ GPT에게 보낼 메시지를 입력해 주세요.");
-    return;
+  const isMentioned = text.includes(`<@${botUserId}>`);
+  const rawInput = text.replace(`<@${botUserId}>`, "").trim();
+  const prevHistory = conversations.get(channelId) || [];
+
+  // ✅ GPT 호출 여부와 관계없이 모든 사용자 메시지 저장
+  if (message.user && !message.subtype) {
+    const userMessage = rawInput || text;
+    const updatedHistory = [...prevHistory, { role: "user", content: userMessage }];
+    conversations.set(channelId, updatedHistory);
   }
 
-  // ✅ /reset 명령어 처리
-  if (rawInput === "/reset") {
-    conversations.set(channelId, []);
-    await say("🧹 대화를 초기화했어요. 새 주제로 다시 시작해볼까요?");
-    return;
-  }
+  // ✅ GPT를 호출하지 않았다면 응답하지 않음
+  if (!isMentioned) return;
 
-  // ✅ "대화내용요약" 명령어 처리
-  if (rawInput === "대화내용요약") {
-    const prevHistory = conversations.get(channelId) || [];
-
-    const userOnlyMessages = prevHistory
+  // ✅ 자연어 기반 요약 명령어 감지
+  const isSummaryRequest = /(대화.?내용|말한.?내용|얘기.*내용).*요약.*(줘|해)/.test(rawInput);
+  if (isSummaryRequest) {
+    const userOnlyMessages = (conversations.get(channelId) || [])
       .filter(msg => msg.role === "user")
       .map((msg, i) => `(${i + 1}) ${msg.content}`)
       .join("\n");
@@ -71,9 +71,7 @@ slackApp.message(async ({ message, say }) => {
     }
 
     const summaryPrompt = `
-다음은 사용자의 과거 Slack 대화 메시지입니다.
-이 흐름을 보고 어떤 주제를 이야기했는지 간결하게 요약해 주세요.
-너무 단순 요약보다는, 흐름이 어떤 식으로 전개되었는지도 설명해 주세요:
+다음은 사용자의 Slack 대화입니다. 어떤 주제들이 오갔는지, 어떤 흐름으로 대화가 전개되었는지 요약해 주세요.
 
 ${userOnlyMessages}
     `.trim();
@@ -82,7 +80,7 @@ ${userOnlyMessages}
       const summaryCompletion = await openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
-          { role: "system", content: "당신은 Slack 대화 흐름을 정리해주는 똑똑한 요약 비서입니다." },
+          { role: "system", content: "당신은 Slack 대화를 요약하는 GPT입니다." },
           { role: "user", content: summaryPrompt }
         ],
         max_tokens: 1024,
@@ -92,70 +90,50 @@ ${userOnlyMessages}
       const summary = summaryCompletion.choices[0]?.message?.content?.trim();
 
       if (summary) {
-        await say(`📝 사용자 대화 흐름 요약:\n${summary}`);
+        await say(`📝 사용자 대화 요약:\n${summary}`);
       } else {
-        await say("⚠️ 대화 요약이 생성되지 않았습니다.");
+        await say("⚠️ 대화 요약을 생성하지 못했어요.");
       }
     } catch (err) {
-      console.error("❌ 요약 중 오류:", err);
+      console.error("❌ 요약 오류:", err);
       await say("⚠️ 대화 요약 중 오류가 발생했습니다.");
     }
 
     return;
   }
 
-  // ✅ 짧은 질문 보완용 프롬프트 래핑
-  const cleanInput = rawInput.length < 15
-    ? `질문이 다소 짧습니다. 이 질문에 대해 맥락을 고려한 충분한 길이의 답변을 해주세요: "${rawInput}"`
-    : rawInput;
-
-  const prevHistory = conversations.get(channelId) || [];
-  const trimmedHistory = prevHistory.slice(-MAX_HISTORY);
-
-  // ✅ 반복 질문 감지
-  const lastUserMsg = trimmedHistory.slice().reverse().find(msg => msg.role === "user")?.content || "";
-  const isRepeatedQuestion = lastUserMsg && rawInput === lastUserMsg;
-
-  let repetitionNotice = "";
-  if (isRepeatedQuestion) {
-    repetitionNotice = `💡 이전에도 비슷한 질문을 하셨는데, 이번엔 다른 관점에서 설명해드릴게요.\n`;
+  // ✅ /reset 명령어 처리
+  if (rawInput === "/reset") {
+    conversations.set(channelId, []);
+    await say("🧹 대화를 초기화했어요. 새 주제로 다시 시작해볼까요?");
+    return;
   }
 
-  // ✅ systemPrompt 설정
+  // ✅ 짧은 질문 처리
+  const cleanInput = rawInput.length < 15
+    ? `질문이 다소 짧습니다. 맥락을 고려해 자세히 답해주세요: "${rawInput}"`
+    : rawInput;
+
+  const trimmedHistory = prevHistory.slice(-MAX_HISTORY);
+  const lastUserMsg = trimmedHistory.slice().reverse().find(msg => msg.role === "user")?.content || "";
+  const isRepeated = lastUserMsg && rawInput === lastUserMsg;
+
+  let repetitionNotice = "";
+  if (isRepeated) {
+    repetitionNotice = "💡 같은 질문이 반복되었어요. 이번엔 다르게 설명해볼게요.\n";
+  }
+
+  // ✅ system 프롬프트 구성
   const systemPrompt = `
-당신은 슬랙 채널에서 팀의 질문을 돕는 스마트한 대화형 GPT입니다.
+당신은 Slack 팀 채널에서 질문을 도와주는 스마트한 GPT입니다.
 
 🎯 목적:
-- 사용자의 질문에 대해 분석하고, 깊이 있게 생각을 확장하며, 실용적인 해결 방안을 제시하는 것이 목표입니다.
-- 단순한 정보 나열이 아니라, 상대가 쉽게 이해하고 바로 적용할 수 있도록 설명하세요.
+- 사용자의 질문에 대해 맥락을 파악하고 깊이 있는 실용적 답변을 제공합니다.
 
-🎲 응답 구조 스타일:
-- 질문의 성격에 따라 가장 자연스럽고 효과적인 구조를 **GPT가 직접 선택해 주세요.**
-- 다음은 참고 가능한 응답 구조입니다 (필요에 따라 조합 가능):
-
-  • 현상 → 원인 → 해결 → 요약  
-  • 문제 → 해결 → 결과  
-  • 실제 사례 → 교훈 → 적용법  
-  • 스토리텔링 → 분석 → 제안  
-  • Q&A 형식  
-  • 비유 중심 해설  
-  • 장점 → 단점 → 추천 기준  
-  • 오해 → 진실 → 활용법  
-  • Before → After → 변화 방법  
-  • 현재 상태 → 목표 → 중간 단계 제시  
-  • 상황 → 공감 → 제안  
-  • 의문 제기 → 분석 → 재정의  
-  • 사례 → 패턴 → 전략  
-  • 과정 → 문제 → 개선안  
-  • 원리 설명 → 활용 방법
-
-📌 응답 가이드라인:
-- 질문의 맥락을 파악하고, 상황에 따라 응답 형식을 조정하세요.
-- 예시와 설명을 풍부하게 포함해 주세요.
-- 마무리에는 다음 행동이나 선택지를 제안해 주세요.
-
-🔴 주제 일관성 유지:
-- 대화 중 주제가 명확히 진행되고 있을 경우, 질문이 갑자기 다른 방향으로 전환되면 그 점을 부드럽게 지적하고, 관련된 질문인지 확인해 주세요.
+📌 스타일:
+- 질문 성격에 따라 설명 구조를 스스로 선택하세요.
+- 예시, 비유, 적용 팁을 포함하세요.
+- 갑작스러운 주제 변경 시 흐름을 리마인드해 주세요.
 `.trim();
 
   const chatHistory = [
@@ -164,17 +142,13 @@ ${userOnlyMessages}
     { role: "user", content: repetitionNotice + cleanInput }
   ];
 
-  console.log(`🟡 [입력] 채널: ${channelId}, 입력: ${rawInput}`);
-
+  // ✅ GPT 응답 생성
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: chatHistory,
       max_tokens: 2048,
       temperature: 0.7,
-      top_p: 1.0,
-      frequency_penalty: 0.2,
-      presence_penalty: 0.3,
     });
 
     const reply = completion.choices[0]?.message?.content?.trim();
@@ -184,26 +158,25 @@ ${userOnlyMessages}
       return;
     }
 
-    const newHistory = [
+    const updatedHistory = [
       ...trimmedHistory,
       { role: "user", content: cleanInput },
       { role: "assistant", content: reply }
     ];
-    conversations.set(channelId, newHistory);
+    conversations.set(channelId, updatedHistory);
 
     await say(reply);
 
-    if (newHistory.length >= MAX_HISTORY) {
-      await say("⚠️ 이 대화는 GPT 응답이 30개 이상 이어졌어요. 주제를 다시 정하거나 `/reset`으로 초기화해보는 건 어떨까요?");
+    if (updatedHistory.length >= MAX_HISTORY) {
+      await say("⚠️ 대화가 길어졌어요. `/reset`으로 초기화하는 걸 추천합니다.");
     }
-
   } catch (err) {
     console.error("❌ GPT 응답 오류:", err);
     await say("⚠️ GPT 응답 중 오류가 발생했습니다.");
   }
 });
 
-// ✅ Express 서버 (헬스 체크용)
+// ✅ Express 서버 (헬스체크)
 const server = express();
 const PORT = process.env.PORT || 3000;
 
